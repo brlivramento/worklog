@@ -1,0 +1,8 @@
+services:
+  worklog:
+    build: .
+    ports:
+      - "3033:3000"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
