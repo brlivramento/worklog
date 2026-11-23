@@ -179,6 +179,8 @@ const sample = {
   meetings: [],
 };
 
+const taskColors = { yellow: "Yellow", green: "Green", blue: "Blue", red: "Red" };
+
 function normalize(raw) {
   const d = structuredClone(raw || sample);
 
@@ -210,6 +212,7 @@ function normalize(raw) {
     t.module = t.module || "";
 
     t.branches = Array.isArray(t.branches) ? t.branches : [];
+    if (!Object.hasOwn(taskColors, t.color)) delete t.color;
   }
 
   for (const a of d.activity) {
@@ -302,6 +305,7 @@ let tab = "overview",
   selected = today(),
   taskProject = "",
   taskKind = "",
+  taskColor = "",
   taskQuery = "",
   reportMonth = today().slice(0, 7),
   docsFolder = null,
@@ -513,7 +517,12 @@ function tasks() {
 
       .join(
         "",
-      )}</select><select id="taskKind"><option value="">All types</option>${kinds.map((k) => `<option ${k === kind ? "selected" : ""}>${k}</option>`).join("")}</select></div><div id="board" class="board"></div>`;
+      )}</select><select id="taskKind"><option value="">All types</option>${kinds.map((k) => `<option ${k === kind ? "selected" : ""}>${k}</option>`).join("")}</select>
+      <select id="taskColorFilter" aria-label="Filter tasks by color">
+        ${[["", "All colors"], ...Object.entries(taskColors), ["none", "No color"]]
+          .map(([value, label]) => `<option value="${value}" ${value === taskColor ? "selected" : ""}>${label}</option>`)
+          .join("")}
+      </select></div><div id="board" class="board"></div>`;
 
   $("#taskSearch").oninput = (e) => {
     taskQuery = e.target.value;
@@ -533,7 +542,18 @@ function tasks() {
     drawBoard();
   };
 
+  $("#taskColorFilter").onchange = (e) => {
+    taskColor = e.target.value;
+    drawBoard();
+  };
+
   drawBoard();
+}
+
+function taskColorButtons(color) {
+  return Object.entries(taskColors)
+    .map(([value, label]) => `<button type="button" class="task-color-dot" data-task-color="${value}" aria-pressed="${color === value}" aria-label="${label} task marker" title="${label} task marker"></button>`)
+    .join("");
 }
 
 function drawBoard() {
@@ -545,6 +565,7 @@ function drawBoard() {
           t.status === s &&
           (!taskProject || t.project === taskProject) &&
           (!taskKind || t.kind === taskKind) &&
+          (!taskColor || (t.color || "none") === taskColor) &&
           [t.title, t.description, t.module, ...t.branches]
 
             .join(" ")
@@ -554,7 +575,7 @@ function drawBoard() {
             .includes(taskQuery.toLowerCase()),
       );
 
-      return `<section class="lane" data-status="${s}"><div class="lanehead">${s}<span class="muted">${rows.length}</span></div>${rows.map((t) => `<div class="task" draggable="true" data-task="${t.id}"><div>${kindTag(t.kind)}<span class="tag">${esc(project(t.project)?.code)}</span></div><strong>${esc(t.module ? `${t.module} · ${t.title}` : t.title)}</strong><div class="description clamp">${esc(t.description)}</div><div class="muted">${esc(t.datetime.replace("T", " "))}</div><div>${t.branches.map((b) => `<span class="tag mono">${esc(b)}</span>`).join("")}</div><div class="taskfooter"><span class="muted">${esc(projectName(t.project))}</span><button class="btn" data-edit="task:${t.id}">Edit</button></div></div>`).join("")}</section>`;
+      return `<section class="lane" data-status="${s}"><div class="lanehead">${s}<span class="muted">${rows.length}</span></div>${rows.map((t) => `<div class="task" draggable="true" data-task="${esc(t.id)}" data-color="${esc(t.color || "")}"><div>${kindTag(t.kind)}<span class="tag">${esc(project(t.project)?.code)}</span></div><strong>${esc(t.module ? `${t.module} · ${t.title}` : t.title)}</strong><div class="description clamp">${esc(t.description)}</div><div class="muted">${esc(t.datetime.replace("T", " "))}</div><div>${t.branches.map((b) => `<span class="tag mono">${esc(b)}</span>`).join("")}</div><div class="taskfooter"><span class="muted">${esc(projectName(t.project))}</span><div class="task-actions">${taskColorButtons(t.color)}<button class="btn" data-edit="task:${esc(t.id)}">Edit</button></div></div></div>`).join("")}</section>`;
     })
 
     .join("");
@@ -1558,6 +1579,20 @@ $("#main").onclick = async (e) => {
 
     render();
 
+    return;
+  }
+
+  const colorButton = e.target.closest("[data-task-color]");
+  if (colorButton) {
+    const taskId = colorButton.closest("[data-task]").dataset.task;
+    const task = data.tasks.find((item) => item.id === taskId);
+    const color = colorButton.dataset.taskColor;
+    if (task && Object.hasOwn(taskColors, color)) {
+      await persistChange(() => {
+        if (task.color === color) delete task.color;
+        else task.color = color;
+      });
+    }
     return;
   }
 

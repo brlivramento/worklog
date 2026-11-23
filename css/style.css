@@ -408,6 +408,60 @@ select:focus-visible {
   gap: 6px;
   margin-top: 8px;
 }
+.task-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+}
+.task[data-color="yellow"],
+.task-color-dot[data-task-color="yellow"] {
+  --task-marker: #facc15;
+}
+.task[data-color="green"],
+.task-color-dot[data-task-color="green"] {
+  --task-marker: #22c55e;
+}
+.task[data-color="blue"],
+.task-color-dot[data-task-color="blue"] {
+  --task-marker: #3b82f6;
+}
+.task[data-color="red"],
+.task-color-dot[data-task-color="red"] {
+  --task-marker: #ef4444;
+}
+.task[data-color="yellow"],
+.task[data-color="green"],
+.task[data-color="blue"],
+.task[data-color="red"] {
+  box-shadow: inset 4px 0 var(--task-marker);
+}
+.task-color-dot {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+.task-color-dot::before {
+  content: "";
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--task-marker);
+}
+.task-color-dot:hover,
+.task-color-dot[aria-pressed="true"] {
+  border-color: var(--task-marker);
+}
+.task-color-dot:focus-visible {
+  outline: 2px solid var(--task-marker);
+  outline-offset: 2px;
+}
 .empty {
   padding: 30px;
   color: var(--muted);
