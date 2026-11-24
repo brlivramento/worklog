@@ -712,116 +712,233 @@ function meetings() {
           .join("")}</div>`);
 }
 
+function reportDays() {
+  if (!reportMonth) return [];
+  const days = new Map();
+  const dayFor = (value) => {
+    const date = value.slice(0, 10);
+    if (!days.has(date)) days.set(date, { date, record: null, tasks: [], activities: [] });
+    return days.get(date);
+  };
+  const inMonth = (value) => value?.startsWith(reportMonth + "-");
+  for (const record of data.attendance) {
+    if (inMonth(record.date)) dayFor(record.date).record = record;
+  }
+  for (const task of data.tasks) {
+    if (inMonth(task.datetime)) dayFor(task.datetime).tasks.push(task);
+  }
+  for (const entry of data.activity) {
+    if (inMonth(entry.start)) dayFor(entry.start).activities.push(entry);
+  }
+  return [...days.values()].sort((a, b) => b.date.localeCompare(a.date));
+}
+
 function reports() {
-  let rows = data.attendance
+  const days = reportDays();
+  const total = days.reduce((sum, day) => sum + attMins(day.record), 0);
+  const badges = (items) => items.map((item) => `<span class="tag">${esc(item.title)}</span>`).join("") || "—";
 
-      .filter((a) => a.date.startsWith(reportMonth))
+  $("#main").innerHTML = heading("Reports", btn("Export PDF", "pdf", true)) +
+    `<div class="filters">
+      <label>Month <input type="month" id="reportMonth" value="${esc(reportMonth)}"></label>
+      <span class="tag">${days.filter(({ record }) => record).length} attendance days</span>
+      <span class="tag">${fmt(total)} logged</span>
+    </div>
+    <div class="card tablewrap"><table class="datatable">
+      <thead><tr><th>Date</th><th>Mode</th><th>Clock in</th><th>Clock out</th><th>Break</th><th>Total</th><th>Tasks</th><th>Activities</th></tr></thead>
+      <tbody>${days.length ? days.map(({ date, record, tasks, activities }) => `
+        <tr>
+          <td>${dateName(date)}</td><td>${esc(record?.mode || "—")}</td>
+          <td>${esc(record?.start || "—")}</td><td>${esc(record?.end || "—")}</td>
+          <td>${record ? `${Number(record.breakMin || 0)} min` : "—"}</td>
+          <td>${record?.end ? fmt(attMins(record)) : "—"}</td>
+          <td class="report-badges">${badges(tasks)}</td>
+          <td class="report-badges">${badges(activities)}</td>
+        </tr>`).join("") : '<tr><td colspan="8" class="empty">No entries for this month.</td></tr>'}</tbody>
+    </table></div>`;
 
-      .sort((a, b) => b.date.localeCompare(a.date)),
-    total = rows.reduce((s, a) => s + attMins(a), 0);
-
-  $("#main").innerHTML =
-    heading("Reports", btn("Export PDF", "pdf", true)) +
-    `<div class="filters"><label>Month <input type="month" id="reportMonth" value="${esc(reportMonth)}"></label><span class="tag">${rows.length} days</span><span class="tag">${fmt(total)}</span></div><div class="card tablewrap"><table class="datatable"><thead><tr><th>Date</th><th>Mode</th><th>Clock in</th><th>Clock out</th><th>Break</th><th>Total</th><th>Activities</th></tr></thead><tbody>${rows
-
-      .map(
-        (a) =>
-          `<tr><td>${dateName(a.date)}</td><td><span class="tag">${esc(a.mode)}</span></td><td>${esc(a.start)}</td><td>${esc(a.end)}</td><td>${Number(a.breakMin || 0)} min</td><td>${fmt(attMins(a))}</td><td class="report-badges">${
-            data.activity
-
-              .filter((x) => x.start.startsWith(a.date))
-
-              .map((x) => `<span class="tag">${esc(x.title)}</span>`)
-
-              .join("") || "—"
-          }</td></tr>`,
-      )
-
-      .join("")}</tbody></table></div>`;
-
-  $("#reportMonth").onchange = (e) => {
-    reportMonth = e.target.value;
-
+  $("#reportMonth").onchange = (event) => {
+    reportMonth = event.target.value;
     reports();
   };
+  $('[data-action="pdf"]').disabled = !reportMonth;
 }
 
 function exportPDF() {
   if (!window.jspdf?.jsPDF) {
     toast("PDF library unavailable. Check your connection.", "error");
-
     return;
   }
+  if (!reportMonth) return;
 
-  const pdf = new window.jspdf.jsPDF({
-      orientation: "portrait",
+  const days = reportDays();
+  const attendanceRows = days.filter(({ record }) => record);
+  const workRows = days.flatMap(({ date, tasks, activities }) => [
+    ...tasks.map((task) => [date, "Task", task.title, projectName(task.project), task.status || "-"]),
+    ...activities.map((entry) => [date, "Activity", entry.title, projectName(entry.project), "-"]),
+  ]);
+  const total = attendanceRows.reduce((sum, { record }) => sum + attMins(record), 0);
+  const pdf = new window.jspdf.jsPDF({ unit: "mm", format: "a4" });
+  const width = pdf.internal.pageSize.getWidth();
+  const height = pdf.internal.pageSize.getHeight();
+  const margin = 15;
+  const contentWidth = width - margin * 2;
+  const bottom = height - 19;
+  const navy = "#18304A";
+  const muted = "#52667C";
+  const border = "#D8E0E9";
+  const period = new Date(reportMonth + "-01T12:00").toLocaleDateString("en-US", {
+    month: "long", year: "numeric",
+  });
+  let y;
 
-      unit: "mm",
+  function pageHeader() {
+    pdf.setFillColor(navy);
+    pdf.rect(0, 0, width, 31, "F");
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(18);
+    pdf.setTextColor("#FFFFFF");
+    pdf.text("Worklog report", margin, 14);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(10);
+    pdf.text(period, margin, 23);
+    y = 39;
+  }
 
-      format: "a4",
-    }),
-    rows = data.attendance
+  function drawTable(title, columns, rows) {
+    const lineHeight = 4;
+    const padding = 2.5;
 
-      .filter((a) => a.date.startsWith(reportMonth))
-
-      .sort((a, b) => b.date.localeCompare(a.date));
-
-  const pageW = pdf.internal.pageSize.getWidth(),
-    pageH = pdf.internal.pageSize.getHeight(),
-    margin = 16,
-    maxW = pageW - margin * 2;
-
-  let y = 22;
-
-  pdf.setFontSize(17);
-
-  pdf.text(`Worklog report - ${reportMonth}`, margin, y);
-
-  y += 13;
-
-  pdf.setFontSize(10);
-
-  const line = (value, indent = 0) => {
-    const lines = pdf.splitTextToSize(String(value), maxW - indent);
-
-    for (const part of lines) {
-      if (y + 6 > pageH - 16) {
-        pdf.addPage("a4", "portrait");
-
-        y = 19;
+    function tableHeader(continued = false) {
+      pdf.setTextColor(navy);
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(12);
+      pdf.text(continued ? `${title} (continued)` : title, margin, y + 4);
+      y += 8;
+      pdf.setFontSize(9);
+      let x = margin;
+      for (const [label, size] of columns) {
+        pdf.setFillColor("#E9EFF6");
+        pdf.setDrawColor(border);
+        pdf.rect(x, y, size, 8, "FD");
+        pdf.text(label, x + padding, y + 5.3);
+        x += size;
       }
-
-      pdf.text(part, margin + indent, y);
-
-      y += 5.5;
+      y += 8;
     }
 
-    y += 2;
-  };
+    function nextPage() {
+      pdf.addPage();
+      pageHeader();
+      tableHeader(true);
+    }
 
-  line(
-    `Days: ${rows.length} | Total hours: ${fmt(rows.reduce((n, a) => n + attMins(a), 0))}`,
+    if (y + 25 > bottom) {
+      pdf.addPage();
+      pageHeader();
+    }
+    tableHeader();
+
+    if (!rows.length) {
+      pdf.setDrawColor(border);
+      pdf.rect(margin, y, contentWidth, 9);
+      pdf.setFont("helvetica", "normal");
+      pdf.setTextColor(muted);
+      pdf.text("No entries for this period.", margin + padding, y + 5.6);
+      y += 17;
+      return;
+    }
+
+    rows.forEach((row, index) => {
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(9);
+      const wrapped = row.map((value, column) =>
+        pdf.splitTextToSize(String(value ?? "-"), columns[column][1] - padding * 2),
+      );
+      const lines = Math.max(...wrapped.map((cell) => cell.length));
+      if (lines * lineHeight + padding * 2 <= bottom - 55 &&
+          y + lines * lineHeight + padding * 2 > bottom) nextPage();
+
+      let offset = 0;
+      while (offset < lines) {
+        const available = Math.floor((bottom - y - padding * 2) / lineHeight);
+        if (available < 1) {
+          nextPage();
+          continue;
+        }
+        const count = Math.min(available, lines - offset);
+        const rowHeight = count * lineHeight + padding * 2;
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(9);
+        pdf.setTextColor(navy);
+        pdf.setDrawColor(border);
+        pdf.setFillColor(index % 2 ? "#F5F8FB" : "#FFFFFF");
+        let x = margin;
+        columns.forEach(([, size], column) => {
+          pdf.rect(x, y, size, rowHeight, "FD");
+          wrapped[column].slice(offset, offset + count).forEach((line, lineIndex) => {
+            pdf.text(line, x + padding, y + padding + 3 + lineIndex * lineHeight);
+          });
+          x += size;
+        });
+        y += rowHeight;
+        offset += count;
+      }
+    });
+    y += 8;
+  }
+
+  pageHeader();
+  const summaries = [
+    ["Attendance days", String(attendanceRows.length)],
+    ["Logged hours", fmt(total)],
+    ["Tasks", String(days.reduce((count, day) => count + day.tasks.length, 0))],
+    ["Activities", String(days.reduce((count, day) => count + day.activities.length, 0))],
+  ];
+  const gap = 4;
+  const box = (contentWidth - gap * (summaries.length - 1)) / summaries.length;
+  summaries.forEach(([label, value], index) => {
+    const x = margin + index * (box + gap);
+    pdf.setFillColor("#F5F8FB");
+    pdf.setDrawColor(border);
+    pdf.roundedRect(x, y, box, 19, 2, 2, "FD");
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(9);
+    pdf.setTextColor(muted);
+    pdf.text(label, x + 4, y + 6);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(14);
+    pdf.setTextColor(navy);
+    pdf.text(value, x + 4, y + 14);
+  });
+  y += 27;
+
+  drawTable("Attendance",
+    [["Date", 32], ["Mode", 30], ["Clock in", 29], ["Clock out", 29], ["Break", 28], ["Total", 32]],
+    attendanceRows.map(({ date, record }) => [
+      date, record.mode, record.start || "-", record.end || "-",
+      `${Number(record.breakMin || 0)} min`, record.end ? fmt(attMins(record)) : "-",
+    ]),
+  );
+  drawTable("Tasks and activities",
+    [["Date", 27], ["Type", 19], ["Title", 69], ["Project", 39], ["Status", 26]],
+    workRows,
   );
 
-  y += 3;
-
-  rows.forEach((a) => {
-    line(
-      `${a.date} | ${a.mode} | ${a.start || "--:--"} - ${a.end || "--:--"} | ${fmt(attMins(a))}`,
-    );
-
-    data.activity
-
-      .filter((x) => x.start.startsWith(a.date))
-
-      .forEach((x) => line(`Activity: ${x.title}`, 5));
-
-    y += 3;
-  });
+  const pages = pdf.getNumberOfPages();
+  for (let page = 1; page <= pages; page++) {
+    pdf.setPage(page);
+    pdf.setDrawColor(border);
+    pdf.line(margin, height - 14, width - margin, height - 14);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8);
+    pdf.setTextColor(muted);
+    pdf.text("Worklog", margin, height - 9);
+    pdf.text(`Page ${page} of ${pages}`, width - margin, height - 9, { align: "right" });
+  }
 
   pdf.save(`worklog-report-${reportMonth}.pdf`);
-
-  toast("A4 PDF exported successfully.");
+  toast("PDF exported.");
 }
 
 function git() {
