@@ -510,7 +510,7 @@ function calendar() {
       ...tasks.map((task) => ["is-task", `Task: ${task.title}`]),
       ...activities.map((entry) => ["activity", `Activity: ${entry.title}`]),
     ];
-    html += `<button type="button" class="day ${d.getMonth() !== month.getMonth() ? "outside" : ""} ${key === selected ? "selected" : ""} ${key === today() ? "today" : ""}" data-date="${key}" aria-pressed="${key === selected}" aria-label="${dateName(key)}, ${tasks.length} tasks, ${activities.length} activities">
+    html += `<button type="button" class="day ${a?.mode === "Off" ? "day-off" : ""} ${d.getMonth() !== month.getMonth() ? "outside" : ""} ${key === selected ? "selected" : ""} ${key === today() ? "today" : ""}" data-date="${key}" aria-pressed="${key === selected}" aria-label="${dateName(key)}${a?.mode === "Off" ? ", Holiday" : ""}, ${tasks.length} tasks, ${activities.length} activities">
       <span class="daynum">${d.getDate()}</span>
       ${a ? `<span class="chip ${esc(a.mode.toLowerCase())}">${esc(a.mode)}</span>` : ""}
       ${markers.length ? `<span class="day-markers" aria-hidden="true">${markers.map(([kind, title]) =>
