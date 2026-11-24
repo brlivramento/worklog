@@ -739,9 +739,9 @@ function exportPDF() {
         pdf.setTextColor(ink);
         pdf.setDrawColor(border);
         const shaded = index % 2 === 1;
-        if (shaded) pdf.setFillColor("#F7F7F7");
         let x = margin;
         columns.forEach(([, size], column) => {
+          if (shaded) pdf.setFillColor("#F7F7F7");
           pdf.rect(x, y, size, rowHeight, shaded ? "FD" : "S");
           wrapped[column].slice(offset, offset + count).forEach((line, lineIndex) => {
             pdf.text(line, x + padding, y + padding + 3 + lineIndex * lineHeight);
