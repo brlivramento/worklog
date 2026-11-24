@@ -408,9 +408,9 @@ function attendancePanel() {
         : '<p class="muted">No attendance recorded.</p>'}
         ${selected === today() && next && !record ? mode("Remote") : ""}
         <div class="formfoot">
-          ${selected === today() && next ? button(next[1], "punchAttendance", true) : ""}
           ${button(record ? "Edit attendance" : "Add attendance", "editAttendance")}
           ${record ? button("Delete attendance", "deleteAttendance") : ""}
+          ${selected === today() && next ? button(next[1], "punchAttendance", true) : ""}
         </div>`
   }</section>`;
 }
@@ -784,24 +784,25 @@ function exportPDF() {
   const margin = 15;
   const contentWidth = width - margin * 2;
   const bottom = height - 19;
-  const navy = "#18304A";
-  const muted = "#52667C";
-  const border = "#D8E0E9";
+  const ink = "#222222";
+  const muted = "#555555";
+  const border = "#C8C8C8";
   const period = new Date(reportMonth + "-01T12:00").toLocaleDateString("en-US", {
     month: "long", year: "numeric",
   });
   let y;
 
   function pageHeader() {
-    pdf.setFillColor(navy);
-    pdf.rect(0, 0, width, 31, "F");
     pdf.setFont("helvetica", "bold");
     pdf.setFontSize(18);
-    pdf.setTextColor("#FFFFFF");
-    pdf.text("Worklog report", margin, 14);
+    pdf.setTextColor(ink);
+    pdf.text("Report", margin, 14);
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(10);
+    pdf.setTextColor(muted);
     pdf.text(period, margin, 23);
+    pdf.setDrawColor(ink);
+    pdf.line(margin, 30, width - margin, 30);
     y = 39;
   }
 
@@ -810,7 +811,7 @@ function exportPDF() {
     const padding = 2.5;
 
     function tableHeader(continued = false) {
-      pdf.setTextColor(navy);
+      pdf.setTextColor(ink);
       pdf.setFont("helvetica", "bold");
       pdf.setFontSize(12);
       pdf.text(continued ? `${title} (continued)` : title, margin, y + 4);
@@ -818,9 +819,8 @@ function exportPDF() {
       pdf.setFontSize(9);
       let x = margin;
       for (const [label, size] of columns) {
-        pdf.setFillColor("#E9EFF6");
         pdf.setDrawColor(border);
-        pdf.rect(x, y, size, 8, "FD");
+        pdf.rect(x, y, size, 8);
         pdf.text(label, x + padding, y + 5.3);
         x += size;
       }
@@ -870,12 +870,13 @@ function exportPDF() {
         const rowHeight = count * lineHeight + padding * 2;
         pdf.setFont("helvetica", "normal");
         pdf.setFontSize(9);
-        pdf.setTextColor(navy);
+        pdf.setTextColor(ink);
         pdf.setDrawColor(border);
-        pdf.setFillColor(index % 2 ? "#F5F8FB" : "#FFFFFF");
+        const shaded = index % 2 === 1;
+        if (shaded) pdf.setFillColor("#F7F7F7");
         let x = margin;
         columns.forEach(([, size], column) => {
-          pdf.rect(x, y, size, rowHeight, "FD");
+          pdf.rect(x, y, size, rowHeight, shaded ? "FD" : "S");
           wrapped[column].slice(offset, offset + count).forEach((line, lineIndex) => {
             pdf.text(line, x + padding, y + padding + 3 + lineIndex * lineHeight);
           });
@@ -899,16 +900,15 @@ function exportPDF() {
   const box = (contentWidth - gap * (summaries.length - 1)) / summaries.length;
   summaries.forEach(([label, value], index) => {
     const x = margin + index * (box + gap);
-    pdf.setFillColor("#F5F8FB");
     pdf.setDrawColor(border);
-    pdf.roundedRect(x, y, box, 19, 2, 2, "FD");
+    pdf.roundedRect(x, y, box, 19, 2, 2);
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(9);
     pdf.setTextColor(muted);
     pdf.text(label, x + 4, y + 6);
     pdf.setFont("helvetica", "bold");
     pdf.setFontSize(14);
-    pdf.setTextColor(navy);
+    pdf.setTextColor(ink);
     pdf.text(value, x + 4, y + 14);
   });
   y += 27;
@@ -1319,6 +1319,7 @@ function modal(kind, id) {
   $("#modalTitle").textContent =
     (id ? "Edit " : "New ") + kind[0].toUpperCase() + kind.slice(1);
 
+  $("#modalFields").classList.toggle("edit-task-fields", kind === "task" && Boolean(id));
   $("#modalFields").innerHTML = f.join("");
 
   $("#modal").showModal();

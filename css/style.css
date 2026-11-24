@@ -312,6 +312,10 @@ select:focus-visible {
 .field textarea.long {
   min-height: 330px;
 }
+.edit-task-fields input[name="title"],
+.edit-task-fields textarea[name="description"] {
+  font-size: 18px;
+}
 .formfoot {
   justify-content: flex-end;
   margin-top: 16px;
