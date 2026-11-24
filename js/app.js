@@ -507,7 +507,7 @@ function calendar() {
     const tasks = data.tasks.filter((task) => task.datetime.startsWith(key));
     const activities = data.activity.filter((entry) => entry.start.startsWith(key));
     const markers = [
-      ...tasks.map((task) => ["task", `Task: ${task.title}`]),
+      ...tasks.map((task) => ["is-task", `Task: ${task.title}`]),
       ...activities.map((entry) => ["activity", `Activity: ${entry.title}`]),
     ];
     html += `<button type="button" class="day ${d.getMonth() !== month.getMonth() ? "outside" : ""} ${key === selected ? "selected" : ""} ${key === today() ? "today" : ""}" data-date="${key}" aria-pressed="${key === selected}" aria-label="${dateName(key)}, ${tasks.length} tasks, ${activities.length} activities">
@@ -523,7 +523,7 @@ function calendar() {
 
   return (
     html +
-    '</div><div class="legend"><span><i class="dot" style="background:#7697d2"></i>Office</span><span><i class="dot" style="background:#62b78c"></i>Remote</span><span><i class="dot" style="background:#aa8dc9"></i>Off</span><span><i class="day-marker task"></i>Tasks</span><span><i class="day-marker activity"></i>Activities</span></div></div>'
+    '</div><div class="legend"><span><i class="dot" style="background:#7697d2"></i>Office</span><span><i class="dot" style="background:#62b78c"></i>Remote</span><span><i class="dot" style="background:#aa8dc9"></i>Off</span><span><i class="day-marker is-task"></i>Tasks</span><span><i class="day-marker activity"></i>Activities</span></div></div>'
   );
 }
 

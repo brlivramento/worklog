@@ -237,7 +237,7 @@ select:focus-visible {
   height: 15px;
   border-radius: 3px;
 }
-.day-marker.task {
+.day-marker.is-task {
   background: #d49b27;
 }
 .day-marker.activity {
