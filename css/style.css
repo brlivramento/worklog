@@ -246,10 +246,10 @@ select:focus-visible {
   border-radius: 3px;
 }
 .day-marker.is-task {
-  background: #d49b27;
+  background: #4052D6;
 }
 .day-marker.activity {
-  background: #4285c5;
+  background: #1591EA;
 }
 .legend .day-marker {
   margin-right: 5px;
