@@ -369,6 +369,64 @@ function render() {
   ]();
 }
 
+const punchSteps = [
+  ["start", "Clock in"],
+  ["breakStart", "Start break"],
+  ["breakEnd", "End break"],
+  ["end", "Clock out"],
+];
+
+let editingAttendance = false;
+let attendancePending = false;
+
+function attendancePanel() {
+  const record = attendance(selected);
+  const next = record?.end || record?.mode === "Off"
+    ? null
+    : punchSteps.find(([key]) => !record?.[key]);
+  const edit = editingAttendance;
+  const button = (label, action, primary = false) =>
+    `<button type="button" class="btn ${primary ? "primary" : ""}" data-action="${action}" ${attendancePending ? "disabled" : ""}>${label}</button>`;
+  const mode = (value) => field("Work mode", "mode", "select", value,
+    ["Office", "Remote", "Off"].map((name) => [name, name]));
+
+  return `<section class="card panel"><h3>${dateName(selected)} · Attendance</h3>${
+    edit
+      ? `<form id="attendanceForm"><fieldset class="attendance-fields formgrid" ${attendancePending ? "disabled" : ""}>
+        ${mode(record?.mode || "Remote")}
+        ${field("Break (minutes)", "breakMin", "number", record?.breakMin ?? 0, [], false, 'min="0" step="1"')}
+        ${field("Clock in", "start", "time", record?.start)}
+        ${field("Clock out", "end", "time", record?.end)}
+        ${field("Notes", "notes", "textarea", record?.notes, [], true)}
+        <div class="formfoot wide">${button("Cancel", "cancelAttendance")}<button class="btn primary">Save attendance</button></div>
+      </fieldset></form>`
+      : `${record ? `<dl class="attendance-summary">
+          <div><dt>Work mode</dt><dd>${esc(record.mode)}</dd></div>
+          ${punchSteps.map(([key, label]) => `<div><dt>${label}</dt><dd>${esc(record[key] || "—")}</dd></div>`).join("")}
+          <div><dt>Break</dt><dd>${Number(record.breakMin || 0)} min</dd></div>
+        </dl>${record.notes ? `<p class="attendance-notes">${esc(record.notes)}</p>` : ""}`
+        : '<p class="muted">No attendance recorded.</p>'}
+        ${selected === today() && next && !record ? mode("Remote") : ""}
+        <div class="formfoot">
+          ${selected === today() && next ? button(next[1], "punchAttendance", true) : ""}
+          ${button(record ? "Edit attendance" : "Add attendance", "editAttendance")}
+          ${record ? button("Delete attendance", "deleteAttendance") : ""}
+        </div>`
+  }</section>`;
+}
+
+async function updateAttendance(change, message) {
+  if (attendancePending) return;
+  attendancePending = true;
+  render();
+  try {
+    return await persistChange(change, message);
+  } finally {
+    attendancePending = false;
+    render();
+  }
+}
+
 function overview() {
   let rows = data.attendance.filter((a) =>
       a.date.startsWith(iso(month).slice(0, 7)),
@@ -381,29 +439,41 @@ function overview() {
     heading(
       "Overview",
 
-      `${btn("‹", "prevMonth")}${btn("Today", "today")}${btn("›", "nextMonth")}<strong>${month.toLocaleDateString("en-US", { month: "long", year: "numeric" })}</strong>${btn("+ Workday", "todayWorkday", true)}`,
+      `${btn("‹", "prevMonth")}${btn("Today", "today")}${btn("›", "nextMonth")}<strong>${month.toLocaleDateString("en-US", { month: "long", year: "numeric" })}</strong>`,
     ) +
-    `<div class="metrics"><div class="card metric"><label>Logged hours</label><strong>${fmt(sum(rows))}</strong><span>This month</span></div><div class="card metric"><label>Office days</label><strong>${office.length} <small>(${fmt(sum(office))})</small></strong><span>This month</span></div><div class="card metric"><label>Remote days</label><strong>${remote.length} <small>(${fmt(sum(remote))})</small></strong><span>This month</span></div><div class="card metric"><label>Active tasks</label><strong>${data.tasks.filter((t) => t.status !== "Production").length}</strong><span>All projects</span></div></div>${calendar()}<div class="below"><section class="card panel"><h3>${dateName(selected)} · Attendance</h3><form id="attendanceForm" class="formgrid">${field(
-      "Work mode",
+    `<div class="metrics"><div class="card metric"><label>Logged hours</label><strong>${fmt(sum(rows))}</strong><span>This month</span></div><div class="card metric"><label>Office days</label><strong>${office.length} <small>(${fmt(sum(office))})</small></strong><span>This month</span></div><div class="card metric"><label>Remote days</label><strong>${remote.length} <small>(${fmt(sum(remote))})</small></strong><span>This month</span></div><div class="card metric"><label>Active tasks</label><strong>${data.tasks.filter((t) => t.status !== "Production").length}</strong><span>All projects</span></div></div>${calendar()}<div class="below">${attendancePanel()}<section class="card panel"><h3>Daily timeline</h3>${timeline()}</section></div>`;
 
-      "mode",
-
-      "select",
-
-      attendance(selected)?.mode || "Remote",
-
-      ["Office", "Remote", "Off"].map((x) => [x, x]),
-    )}${field("Break (minutes)", "breakMin", "number", attendance(selected)?.breakMin ?? 60)}${field("Clock in", "start", "time", attendance(selected)?.start || "09:00")}${field("Clock out", "end", "time", attendance(selected)?.end || "18:00")}${field("Notes", "notes", "textarea", attendance(selected)?.notes || "", [], true)}<div class="formfoot" style="grid-column:1/-1"><button class="btn primary">Save attendance</button></div></form></section><section class="card panel"><h3>Daily timeline</h3>${timeline()}</section></div>`;
-
-  $("#attendanceForm").onsubmit = async (e) => {
+  const form = $("#attendanceForm");
+  if (!form) return;
+  form.onsubmit = async (e) => {
     e.preventDefault();
-    const v = Object.fromEntries(new FormData(e.target));
-    v.breakMin = Number(v.breakMin);
-    v.date = selected;
-    await persistChange(() => {
-      data.attendance = data.attendance.filter((a) => a.date !== selected);
-      data.attendance.push(v);
-    }, "Attendance saved successfully.");
+    const date = selected;
+    const record = attendance(date);
+    const values = Object.fromEntries(new FormData(form));
+    values.breakMin = Number(values.breakMin);
+    if (values.end && (!values.start || values.end < values.start)) {
+      toast("Clock out must be at or after clock in.", "error");
+      return;
+    }
+    if (values.end && values.breakMin > minutes(date + "T" + values.start, date + "T" + values.end)) {
+      toast("Break cannot exceed the time between clock in and clock out.", "error");
+      return;
+    }
+    if (record?.breakStart && (!values.start || values.start > record.breakStart ||
+        (values.end && values.end < (record.breakEnd || record.breakStart)) ||
+        values.breakMin !== Number(record.breakMin || 0))) {
+      values.breakStart = "";
+      values.breakEnd = "";
+    }
+    editingAttendance = false;
+    const success = await updateAttendance(() => {
+      if (record) Object.assign(record, values);
+      else data.attendance.push({ date, ...values });
+    }, "Attendance saved.");
+    if (!success && selected === date && tab === "overview") {
+      editingAttendance = true;
+      render();
+    }
   };
 }
 
@@ -1560,6 +1630,7 @@ $("#main").onclick = async (e) => {
   let d = e.target.closest("[data-date]");
 
   if (d) {
+    editingAttendance = false;
     selected = d.dataset.date;
 
     month = new Date(selected + "T12:00");
@@ -1626,6 +1697,7 @@ $("#main").onclick = async (e) => {
       break;
 
     case "today":
+      editingAttendance = false;
       selected = today();
 
       month = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
@@ -1634,16 +1706,57 @@ $("#main").onclick = async (e) => {
 
       break;
 
-    case "todayWorkday":
-      selected = today();
-
-      month = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-
+    case "editAttendance":
+      editingAttendance = true;
       render();
-
-      $("#attendanceForm [name=start]").focus();
-
+      $("#attendanceForm [name=mode]").focus();
       break;
+
+    case "cancelAttendance":
+      editingAttendance = false;
+      render();
+      $("#main [data-action=editAttendance]").focus();
+      break;
+
+    case "deleteAttendance": {
+      const date = selected;
+      if (!confirm(`Delete attendance for ${dateName(date)}?`)) break;
+      await updateAttendance(() => {
+        data.attendance = data.attendance.filter((record) => record.date !== date);
+      }, "Attendance deleted.");
+      break;
+    }
+
+    case "punchAttendance": {
+      const date = selected;
+      const record = attendance(date);
+      if (date !== today() || record?.end || record?.mode === "Off") break;
+      const nextIndex = punchSteps.findIndex(([key]) => !record?.[key]);
+      if (nextIndex === -1) break;
+      const [key, label] = punchSteps[nextIndex];
+      const time = now().slice(11);
+      const previous = record?.[punchSteps[nextIndex - 1]?.[0]];
+      if (previous && time < previous) {
+        toast("The current time is earlier than the previous punch. Edit attendance to correct it.", "error");
+        break;
+      }
+      const mode = $("#main [name=mode]")?.value || "Remote";
+      if (mode === "Off") {
+        toast("Use Add attendance to record a day off.", "error");
+        break;
+      }
+      await updateAttendance(() => {
+        if (!record) {
+          data.attendance.push({ date, mode, start: time, breakMin: 0, notes: "" });
+          return;
+        }
+        record[key] = time;
+        if (key === "breakEnd") {
+          record.breakMin = minutes(date + "T" + record.breakStart, date + "T" + time);
+        }
+      }, `${label} recorded.`);
+      break;
+    }
 
     case "newClient":
       modal("client");
