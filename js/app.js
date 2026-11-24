@@ -825,101 +825,62 @@ function exportPDF() {
 }
 
 function git() {
-  let choices = data.tasks.map((t) => [
-    t.id,
-
-    `${project(t.project)?.code || ""} · ${t.module || "General"} · ${t.title}`,
+  const choices = data.tasks.filter((task) => task.status === "In Progress").map((task) => [
+    task.id,
+    `${project(task.project)?.code || ""} · ${task.module || "General"} · ${task.title}`,
   ]);
 
-  $("#main").innerHTML =
-    heading("Git Planner") +
-    `<div class="card"><div class="formgrid">${field("Task", "gitTask", "select", choices[0]?.[0] || "", [["", "Select a task"], ...choices], true)}${field(
-      "Commit type",
+  $("#main").innerHTML = heading("Git Planner") +
+    `<div class="card git-planner">
+      ${field("Task", "gitTask", "select", choices[0]?.[0] || "",
+        [["", choices.length ? "Select an in-progress task" : "No tasks in progress"], ...choices])}
+      <fieldset class="planner-group">
+        <legend>Scope</legend>
+        ${field("Shared scope", "gitScope", "text", "")}
+        <p class="note">Optional. Used in the branch name and commit message.</p>
+      </fieldset>
+      <fieldset class="planner-group">
+        <legend>Branch</legend>
+        <div class="formgrid">
+          ${field("Prefix", "gitPrefix", "select", "feat",
+            Object.entries({ ...commitLabels, hotfix: "Urgent fix" }).map(([value, label]) => [value, `${value} · ${label}`]))}
+          ${field("Name", "gitSlug", "text", "")}
+        </div>
+        <p class="note">prefix/scope-name</p>
+        <div id="gitBranch" class="codebox mono"></div>
+        <div class="actions">
+          <button class="btn" data-action="copyBranch">Copy branch</button>
+          <button class="btn primary" data-action="linkBranch">Add branch to task</button>
+        </div>
+      </fieldset>
+      <fieldset class="planner-group">
+        <legend>Conventional Commit</legend>
+        <div class="formgrid">
+          ${field("Type", "gitType", "select", "feat",
+            [...new Set(Object.values(cc))].map((value) => [value, `${value} · ${commitLabels[value]}`]))}
+          ${field("Description", "gitDescription", "text", "")}
+        </div>
+        <div id="gitCommit" class="codebox mono"></div>
+        <div class="actions"><button class="btn" data-action="copyCommit">Copy commit</button></div>
+      </fieldset>
+      <div class="actions"><button class="btn" data-action="suggestGit">Suggest branch &amp; commit</button></div>
+    </div>`;
 
-      "gitType",
-
-      "select",
-
-      "feat",
-
-      Object.values(cc)
-
-        .filter((x, i, a) => a.indexOf(x) === i)
-
-        .map((x) => [x, commitLabels[x] || x]),
-    )}${field("Scope", "gitScope", "text", "")}${field(
-      "Branch prefix",
-
-      "gitPrefix",
-
-      "select",
-
-      "feat",
-
-      [
-        ["feat", "feat - Funcionalidade"],
-
-        ["fix", "fix - Correção"],
-
-        ["hotfix", "hotfix - Correção urgente"],
-
-        ["refactor", "refactor - Refatoração"],
-
-        ["chore", "chore - Manutenção"],
-
-        ["docs", "docs - Documentação"],
-
-        ["test", "test - Testes"],
-
-        ["perf", "perf - Performance"],
-
-        ["build", "build - Compilação"],
-
-        ["ci", "ci - Integração contínua"],
-      ],
-    )}${field("Branch slug", "gitSlug", "text", "")}${field("Commit description", "gitDescription", "text", "", [], true)}</div><div class="formfoot"><button class="btn primary" data-action="suggestGit" type="button">Suggest branch & commit</button></div><div class="section" style="margin-top:20px"><h3>Suggested branch</h3><div id="gitBranch" class="codebox mono"></div><button class="btn" data-action="copyBranch">Copy branch</button></div><div class="section"><h3>Conventional Commit</h3><div id="gitCommit" class="codebox mono"></div><button class="btn" data-action="copyCommit">Copy commit</button></div><button class="btn primary" data-action="linkBranch">Add branch to task</button></div>`;
-
-  const gitTask = $("#gitTask");
-
-  if (gitTask) {
-    gitTask.onchange = gitAutofill;
-  }
-
-  ["gitType", "gitPrefix", "gitScope", "gitSlug", "gitDescription"].forEach(
-    (id) => {
-      const element = $(`#${id}`);
-
-      if (!element) {
-        console.warn(`Git Planner: #${id} não encontrado`);
-
-        return;
-      }
-
-      element.addEventListener("input", gitPreview);
-    },
-  );
-
+  $("#gitTask").onchange = gitAutofill;
+  document.querySelector(".git-planner").addEventListener("input", gitPreview);
   gitAutofill();
 }
 
 const commitLabels = {
-  feat: "feat - Funcionalidade",
-
-  fix: "fix - Correção",
-
-  refactor: "refactor - Refatoração",
-
-  chore: "chore - Manutenção",
-
-  docs: "docs - Documentação",
-
-  test: "test - Testes",
-
-  perf: "perf - Performance",
-
-  build: "build - Compilação",
-
-  ci: "ci - Integração contínua",
+  feat: "Feature",
+  fix: "Bug fix",
+  refactor: "Refactoring",
+  chore: "Maintenance",
+  docs: "Documentation",
+  test: "Tests",
+  perf: "Performance",
+  build: "Build",
+  ci: "Continuous integration",
 };
 
 const slug = (s) =>
@@ -934,90 +895,34 @@ const slug = (s) =>
 
     .replace(/^-|-$/g, "");
 
-function suggestDescription(t) {
-  let title = (t.title || "").trim();
-
-  const rules = [
-    [/^(add|create|implement|develop)\s+/i, "Adicionar "],
-
-    [/^(fix|correct|resolve)\s+/i, "Corrigir "],
-
-    [/^(update|change|modify)\s+/i, "Atualizar "],
-
-    [/^(remove|delete)\s+/i, "Remover "],
-
-    [/^(review|inspect|investigate)\s+/i, "Revisar "],
-
-    [/^(document|write documentation for)\s+/i, "Documentar "],
-
-    [/^(refactor|restructure)\s+/i, "Refatorar "],
-
-    [/^(test|validate)\s+/i, "Testar "],
-  ];
-
-  for (const [pattern, verb] of rules) {
-    if (pattern.test(title))
-      return (
-        verb + title.replace(pattern, "").replace(/^./, (x) => x.toLowerCase())
-      );
-  }
-
-  return title;
-}
-
 function gitAutofill() {
-  const gitTask = $("#gitTask");
-
-  if (!gitTask) return;
-
-  const t = data.tasks.find((t) => t.id === gitTask.value);
-
-  if (!t) return;
-
-  const type = cc[t.kind] || "chore";
-
-  const prefix =
-    t.kind === "Hotfix"
-      ? "hotfix"
-      : ["fix", "refactor", "feat"].includes(type)
-        ? type
-        : "chore";
-
-  const values = {
-    gitType: type,
-
-    gitPrefix: prefix,
-
-    gitScope: slug(t.module || project(t.project)?.code || "general"),
-
-    gitSlug: slug(t.title),
-
-    gitDescription: suggestDescription(t),
-  };
-
-  Object.entries(values).forEach(([id, value]) => {
-    const element = $(`#${id}`);
-
-    if (element) {
-      element.value = value;
-    } else {
-      console.warn(`Git Planner: #${id} não encontrado no HTML`);
-    }
-  });
-
+  const task = data.tasks.find((item) => item.id === $("#gitTask").value && item.status === "In Progress");
+  const type = task ? cc[task.kind] || "chore" : "feat";
+  const prefix = task?.kind === "Hotfix" ? "hotfix" : type;
+  $("#gitType").value = type;
+  $("#gitPrefix").value = prefix;
+  $("#gitScope").value = task ? slug(task.module || project(task.project)?.code || "general") : "";
+  $("#gitSlug").value = slug(task?.title);
+  $("#gitDescription").value = task?.title.trim() || "";
   gitPreview();
 }
 
 function gitPreview() {
-  let scope = slug($("#gitScope").value),
-    type = $("#gitType").value,
-    prefix = $("#gitPrefix").value,
-    branch = `${prefix}/${scope ? scope + "-" : ""}${slug($("#gitSlug").value)}`,
-    commit = `${type}${scope ? "(" + scope + ")" : ""}: ${$("#gitDescription").value.trim()}`;
+  const scope = slug($("#gitScope").value);
+  const type = $("#gitType").value;
+  const prefix = $("#gitPrefix").value;
+  const name = slug($("#gitSlug").value);
+  const description = $("#gitDescription").value.trim();
+  const branch = name ? `${prefix}/${scope ? scope + "-" : ""}${name}` : "";
+  const commit = description ? `${type}${scope ? `(${scope})` : ""}: ${description}` : "";
 
   $("#gitBranch").textContent = branch;
-
   $("#gitCommit").textContent = commit;
+  const task = data.tasks.find((item) => item.id === $("#gitTask").value && item.status === "In Progress");
+  $('[data-action="copyBranch"]').disabled = !branch;
+  $('[data-action="copyCommit"]').disabled = !commit;
+  $('[data-action="linkBranch"]').disabled = !branch || !task || task.branches.includes(branch);
+  $('[data-action="suggestGit"]').disabled = !task;
 }
 
 function modal(kind, id) {
@@ -1811,7 +1716,7 @@ $("#main").onclick = async (e) => {
     case "linkBranch": {
       const taskId = $("#gitTask").value;
       const branch = $("#gitBranch").textContent;
-      const t = data.tasks.find((x) => x.id === taskId);
+      const t = data.tasks.find((x) => x.id === taskId && x.status === "In Progress");
       if (t && branch && !t.branches.includes(branch)) {
         await persistChange(() => {
           const task = data.tasks.find((x) => x.id === taskId);

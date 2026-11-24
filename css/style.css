@@ -714,3 +714,23 @@ pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+.git-planner {
+  display: grid;
+  gap: 16px;
+}
+.planner-group {
+  min-width: 0;
+  margin: 0;
+  padding: 12px 16px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.planner-group legend {
+  padding: 0 6px;
+  font-weight: 600;
+}
+.planner-group .codebox {
+  margin-top: 10px;
+  overflow-wrap: anywhere;
+}
