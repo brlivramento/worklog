@@ -504,36 +504,35 @@ function calendar() {
     let key = iso(d),
       a = attendance(key);
 
-    html += `<div class="day ${d.getMonth() !== month.getMonth() ? "outside" : ""} ${key === selected ? "selected" : ""} ${key === today() ? "today" : ""}" data-date="${key}"><span class="daynum">${d.getDate()}</span>${a ? `<span class="chip ${a.mode.toLowerCase()}">${esc(a.mode)}</span><span class="chip">${esc(a.start)} – ${esc(a.end)}</span>` : ""}${data.tasks
-
-      .filter((t) => t.datetime.startsWith(key))
-
-      .slice(0, 2)
-
-      .map((t) => `<span class="chip taskchip">${esc(t.title)}</span>`)
-
-      .join("")}${data.meetings
-
-      .filter((m) => m.start.startsWith(key))
-
-      .slice(0, 1)
-
-      .map(
-        (m) =>
-          `<span class="chip">${esc(m.start.slice(11))} ${esc(m.title)}</span>`,
-      )
-
-      .join("")}</div>`;
+    const tasks = data.tasks.filter((task) => task.datetime.startsWith(key));
+    const activities = data.activity.filter((entry) => entry.start.startsWith(key));
+    const markers = [
+      ...tasks.map((task) => ["task", `Task: ${task.title}`]),
+      ...activities.map((entry) => ["activity", `Activity: ${entry.title}`]),
+    ];
+    html += `<button type="button" class="day ${d.getMonth() !== month.getMonth() ? "outside" : ""} ${key === selected ? "selected" : ""} ${key === today() ? "today" : ""}" data-date="${key}" aria-pressed="${key === selected}" aria-label="${dateName(key)}, ${tasks.length} tasks, ${activities.length} activities">
+      <span class="daynum">${d.getDate()}</span>
+      ${a ? `<span class="chip ${esc(a.mode.toLowerCase())}">${esc(a.mode)}</span>` : ""}
+      ${markers.length ? `<span class="day-markers" aria-hidden="true">${markers.map(([kind, title]) =>
+        `<span class="day-marker ${kind}" title="${esc(title)}"></span>`).join("")}</span>` : ""}
+      ${data.meetings.filter((meeting) => meeting.start.startsWith(key)).slice(0, 1).map(
+        (meeting) => `<span class="chip">${esc(meeting.start.slice(11))} ${esc(meeting.title)}</span>`,
+      ).join("")}
+    </button>`;
   }
 
   return (
     html +
-    '</div><div class="legend"><span><i class="dot" style="background:#7697d2"></i>Office</span><span><i class="dot" style="background:#62b78c"></i>Remote</span><span><i class="dot" style="background:#aa8dc9"></i>Off</span><span><i class="dot" style="background:#d7b766"></i>Tasks</span></div></div>'
+    '</div><div class="legend"><span><i class="dot" style="background:#7697d2"></i>Office</span><span><i class="dot" style="background:#62b78c"></i>Remote</span><span><i class="dot" style="background:#aa8dc9"></i>Off</span><span><i class="day-marker task"></i>Tasks</span><span><i class="day-marker activity"></i>Activities</span></div></div>'
   );
 }
 
 function timeline() {
   let items = [
+    ...data.tasks
+      .filter((task) => task.datetime.startsWith(selected))
+      .map((task) => ({ ...task, start: task.datetime, type: "Task" })),
+
     ...data.activity
 
       .filter((a) => a.start.startsWith(selected))
@@ -1638,6 +1637,7 @@ $("#main").onclick = async (e) => {
     month.setDate(1);
 
     render();
+    $(`[data-date="${selected}"]`)?.focus();
 
     return;
   }
