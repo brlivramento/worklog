@@ -1,5 +1,21 @@
+@font-face {
+  font-family: "DejaVu Sans";
+  src: url("../fonts/DejaVuSans.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "DejaVu Sans";
+  src: url("../fonts/DejaVuSans-Bold.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+}
+
 :root {
-  font-family: Verdana, Helvetica, sans-serif;
+  font-family: Verdana, "DejaVu Sans", Helvetica, sans-serif;
   color-scheme: light;
   --bg: #f7f8fa;
   --surface: #fff;
@@ -322,7 +338,54 @@ select:focus-visible {
 }
 .edit-task-fields input[name="title"],
 .edit-task-fields textarea[name="description"] {
-  font-size: 18px;
+  font-size: 16px;
+}
+.task-dialog {
+  padding: 16px;
+}
+.task-dialog:has(.edit-task-fields) {
+  max-height: 94dvh;
+}
+.task-dialog .dialoghead {
+  margin-bottom: 10px;
+}
+.task-dialog .formfoot {
+  margin: 10px 0 0;
+}
+.task-dialog .formgrid {
+  gap: 8px 12px;
+}
+.task-dialog .field input,
+.task-dialog .field select,
+.task-dialog .field textarea {
+  padding: 6px 8px;
+}
+.task-dialog .field textarea.long {
+  min-height: 96px;
+}
+.task-dialog .edit-task-fields .field textarea.long {
+  min-height: clamp(96px, calc(100dvh - 620px), 316px);
+}
+.task-dates {
+  display: grid;
+  grid-column: 1/-1;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.task-dates legend {
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+@media (max-width: 760px) {
+  .task-dates {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 .formfoot {
   justify-content: flex-end;
@@ -412,6 +475,89 @@ select:focus-visible {
   width: auto;
   min-width: 160px;
 }
+
+.task-multiselect {
+  position: relative;
+  min-width: 128px;
+}
+
+.task-multiselect > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  list-style: none;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-alt);
+  cursor: pointer;
+}
+
+.task-multiselect > summary::-webkit-details-marker {
+  display: none;
+}
+
+.task-multiselect > summary::after {
+  content: "▾";
+  margin-left: auto;
+  color: var(--muted);
+}
+
+.task-multiselect[open] > summary::after {
+  content: "▴";
+}
+
+.task-multiselect [hidden] {
+  display: none;
+}
+
+.task-multiselect-options {
+  position: absolute;
+  z-index: 2;
+  inset-inline-start: 0;
+  min-width: 100%;
+  width: max-content;
+  max-width: min(280px, calc(100vw - 32px));
+  max-height: 280px;
+  margin: 4px 0 0;
+  padding: 6px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.task-multiselect:last-child .task-multiselect-options {
+  inset-inline: auto 0;
+}
+
+.task-multiselect-options label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.task-multiselect-options label:hover {
+  background: var(--surface-alt);
+}
+
+.task-multiselect-options input[type="checkbox"] {
+  flex: none;
+  width: auto;
+  min-width: 0;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.task-multiselect-options .btn {
+  width: 100%;
+  margin-top: 4px;
+}
+
 .board {
   display: grid;
   grid-template-columns: repeat(5, minmax(215px, 1fr));
@@ -453,6 +599,83 @@ select:focus-visible {
   align-items: center;
   gap: 4px;
 }
+.task-stack {
+  margin: 0 3px 17px 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-alt);
+  box-shadow: 3px 3px 0 var(--surface), 4px 4px 0 var(--border);
+}
+
+.task-stack-header {
+  display: flex;
+  align-items: start;
+  gap: 6px;
+  padding: 5px 7px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 15px;
+  overflow-wrap: anywhere;
+  cursor: grab;
+}
+
+.task-stack-header::before {
+  content: "";
+  flex: none;
+  margin-top: 0.45em;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 6px solid var(--muted);
+}
+
+.task-stack-header strong {
+  flex: 1;
+}
+
+.task-stack[open] > .task-stack-header {
+  margin-bottom: 8px;
+}
+
+.task-stack[open] > .task-stack-header::before {
+  transform: rotate(90deg);
+}
+
+.task-stack .task-stacked {
+  margin-bottom: 4px;
+  padding: 8px 8px 6px 10px;
+}
+
+.task-stack .task-stacked:last-child {
+  margin-bottom: 0;
+}
+
+.task-stack-card-title {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.task-stack-card-title strong {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.task-stack-card-title .btn {
+  padding: 4px 7px;
+  font-size: 12px;
+}
+
+.task-stack-details > summary {
+  width: fit-content;
+  margin: 4px 0;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+
 .task[data-color="yellow"],
 .task-color-dot[data-task-color="yellow"] {
   --task-marker: #facc15;

@@ -146,6 +146,8 @@ function normalize(raw) {
     t.description = t.description ?? t.notes ?? "";
     t.kind = t.kind || "Chore";
     t.module = t.module || "";
+    if (typeof t.group === "string") t.group = t.group.trim();
+    else delete t.group;
     t.branches = Array.isArray(t.branches) ? t.branches : [];
     if (!Object.hasOwn(taskColors, t.color)) delete t.color;
   }
@@ -231,9 +233,10 @@ let tab = "overview",
   subMeetings = "meetings",
   month = new Date(new Date().getFullYear(), new Date().getMonth(), 1),
   selected = today(),
-  taskProject = "",
-  taskKind = "",
-  taskColor = "",
+  taskProjects = new Set(),
+  taskKinds = new Set(),
+  taskColorFilters = new Set(),
+  collapsedTaskStacks = new Set(),
   taskQuery = "",
   reportMonth = today().slice(0, 7),
   docsFolder = null,
@@ -392,6 +395,14 @@ function overview() {
   };
 }
 
+function tasksOnDate(date) {
+  return data.tasks.filter((task) => {
+    const start = task.datetime.slice(0, 10);
+    const end = task.workEnd?.slice(0, 10) || start;
+    return start <= date && date <= end;
+  });
+}
+
 function calendar() {
   let start = new Date(month);
   start.setDate(1 - start.getDay());
@@ -415,7 +426,7 @@ function calendar() {
     let key = iso(d),
       a = attendance(key);
 
-    const tasks = data.tasks.filter((task) => task.datetime.startsWith(key));
+    const tasks = tasksOnDate(key);
     const activities = data.activity.filter((entry) => entry.start.startsWith(key));
     const markers = [
       ...tasks.map((task) => ["is-task", `Task: ${task.title}`]),
@@ -440,9 +451,11 @@ function calendar() {
 
 function timeline() {
   let items = [
-    ...data.tasks
-      .filter((task) => task.datetime.startsWith(selected))
-      .map((task) => ({ ...task, start: task.datetime, type: "Task" })),
+    ...tasksOnDate(selected).map((task) => ({
+      ...task,
+      start: task.datetime.startsWith(selected) ? task.datetime : selected,
+      type: "Task",
+    })),
     ...data.activity
       .filter((a) => a.start.startsWith(selected))
       .map((a) => ({ ...a, type: "Activity" })),
@@ -452,7 +465,7 @@ function timeline() {
   ].sort((a, b) => a.start.localeCompare(b.start));
 
   return items.length
-    ? `<div class="list">${items.map((x) => `<div class="item card"><div class="itemtop"><strong>${esc(x.start.slice(11))} · ${esc(x.title)}</strong><span class="tag">${x.type}</span></div><div class="description clamp">${esc(x.description)}</div><div class="muted">${esc(projectName(x.project))}</div></div>`).join("")}</div>`
+    ? `<div class="list">${items.map((x) => `<div class="item card"><div class="itemtop"><strong>${x.start.length > 10 ? esc(x.start.slice(11)) + " · " : ""}${esc(x.title)}</strong><span class="tag">${x.type}</span></div><div class="description clamp">${esc(x.description)}</div><div class="muted">${esc(projectName(x.project))}</div></div>`).join("")}</div>`
     : '<div class="empty">No entries</div>';
 }
 
@@ -473,40 +486,63 @@ function projects() {
       : `<div class="card tablewrap"><table class="datatable"><thead><tr><th>Code</th><th>Project</th><th>Client</th><th>Modules</th><th>Tasks</th><th></th></tr></thead><tbody>${data.projects.map((p) => `<tr><td><span class="tag">${esc(p.code)}</span></td><td><strong>${esc(p.name)}</strong><div class="muted">${esc(p.description)}</div></td><td>${esc(clientName(p.clientId))}</td><td>${p.modules.map((m) => `<span class="tag">${esc(m)}</span>`).join("")}</td><td>${data.tasks.filter((t) => t.project === p.id).length}</td><td><button class="btn" data-edit="project:${p.id}">Edit</button></td></tr>`).join("")}</tbody></table></div>`);
 }
 
+function taskMultiSelect(id, label, options, selected) {
+  return `<details class="task-multiselect" name="task-filters" id="${id}">
+    <summary><span>${label}</span><span data-filter-count class="tag"${selected.size ? "" : " hidden"}>${selected.size}</span></summary>
+    <fieldset class="task-multiselect-options" aria-label="${label}">
+      ${options.map(([value, text]) => `<label>
+        <input type="checkbox" value="${esc(value)}"${selected.has(value) ? " checked" : ""}>
+        <span>${esc(text)}</span>
+      </label>`).join("")}
+      <button class="btn" type="button" data-clear-filter${selected.size ? "" : " disabled"}>Clear selection</button>
+    </fieldset>
+  </details>`;
+}
+
 function tasks() {
-  let pid = taskProject,
-    kind = taskKind;
+  const filters = [
+    ["taskProject", "Projects", projectOptions(), taskProjects],
+    ["taskKind", "Types", kinds.map((kind) => [kind, kind]), taskKinds],
+    ["taskColorFilter", "Colors", [...Object.entries(taskColors), ["none", "No color"]], taskColorFilters],
+  ];
   $("#main").innerHTML =
     heading("Tasks", btn("+ Task", "newTask", true)) +
-    `<div class="filters"><input id="taskSearch" placeholder="Search tasks" value="${esc(taskQuery)}"><select id="taskProject"><option value="">All projects</option>${projectOptions()
-      .map(
-        ([v, l]) =>
-          `<option value="${esc(v)}" ${v === pid ? "selected" : ""}>${esc(l)}</option>`,
-      )
-      .join(
-        "",
-      )}</select><select id="taskKind"><option value="">All types</option>${kinds.map((k) => `<option ${k === kind ? "selected" : ""}>${k}</option>`).join("")}</select>
-      <select id="taskColorFilter" aria-label="Filter tasks by color">
-        ${[["", "All colors"], ...Object.entries(taskColors), ["none", "No color"]]
-      .map(([value, label]) => `<option value="${value}" ${value === taskColor ? "selected" : ""}>${label}</option>`)
-      .join("")}
-      </select></div><div id="board" class="board"></div>`;
+    `<div class="filters task-filters">
+      <input id="taskSearch" aria-label="Search tasks" placeholder="Search tasks" value="${esc(taskQuery)}">
+      ${filters.map((filter) => taskMultiSelect(...filter)).join("")}
+    </div><div id="board" class="board"></div>`;
+
   $("#taskSearch").oninput = (e) => {
     taskQuery = e.target.value;
     drawBoard();
   };
-  $("#taskProject").onchange = (e) => {
-    taskProject = e.target.value;
-    drawBoard();
-  };
-  $("#taskKind").onchange = (e) => {
-    taskKind = e.target.value;
-    drawBoard();
-  };
-  $("#taskColorFilter").onchange = (e) => {
-    taskColor = e.target.value;
-    drawBoard();
-  };
+  for (const [id, , , selected] of filters) {
+    const filter = $(`#${id}`);
+    const count = filter.querySelector("[data-filter-count]");
+    const clear = filter.querySelector("[data-clear-filter]");
+    const boxes = filter.querySelectorAll("input[type=checkbox]");
+
+    const refresh = () => {
+      selected.clear();
+      for (const box of boxes) if (box.checked) selected.add(box.value);
+      count.textContent = selected.size;
+      count.hidden = !selected.size;
+      clear.disabled = !selected.size;
+      drawBoard();
+    };
+    filter.onchange = refresh;
+    clear.onclick = () => {
+      for (const box of boxes) box.checked = false;
+      refresh();
+      filter.querySelector("summary").focus();
+    };
+    filter.onkeydown = (event) => {
+      if (event.key === "Escape" && filter.open) {
+        filter.open = false;
+        filter.querySelector("summary").focus();
+      }
+    };
+  }
   drawBoard();
 }
 
@@ -516,40 +552,91 @@ function taskColorButtons(color) {
     .join("");
 }
 
+function taskCard(task, stacked = false) {
+  const title = esc(task.module ? `${task.module} · ${task.title}` : task.title);
+  const edit = `<button class="btn" data-edit="task:${esc(task.id)}" aria-label="Edit ${esc(task.title)}">Edit</button>`;
+  const tags = `<div>${kindTag(task.kind)}<span class="tag">${esc(project(task.project)?.code)}</span></div>`;
+  const metadata = `<div class="description clamp">${esc(task.description)}</div>
+    <div class="muted">${esc(task.datetime.replace("T", " "))}</div>
+    <div>${task.branches.map((branch) => `<span class="tag mono">${esc(branch)}</span>`).join("")}</div>`;
+  const footer = `<div class="taskfooter"><span class="muted">${esc(projectName(task.project))}</span>
+    <div class="task-actions">${taskColorButtons(task.color)}${stacked ? "" : edit}</div></div>`;
+  return `<div class="task${stacked ? " task-stacked" : ""}" draggable="true" data-task="${esc(task.id)}" data-color="${esc(task.color || "")}">
+    ${stacked
+      ? `<div class="task-stack-card-title"><strong>${title}</strong>${edit}</div>
+         <details class="task-stack-details"><summary>Details</summary>${tags}${metadata}${footer}</details>`
+      : `${tags}<strong>${title}</strong>${metadata}${footer}`}
+  </div>`;
+}
+
+function taskStacks(tasks, status) {
+  const items = new Map();
+  for (const task of tasks) {
+    const name = task.group || "";
+    const key = name ? name.toLowerCase() : Symbol();
+    if (!items.has(key)) items.set(key, { name, tasks: [] });
+    items.get(key).tasks.push(task);
+  }
+  return [...items].map(([key, { name, tasks }]) => {
+    if (!name) return taskCard(tasks[0]);
+    const stackKey = JSON.stringify([status, key]);
+    return `<details class="task-stack" data-stack="${esc(stackKey)}"${collapsedTaskStacks.has(stackKey) ? "" : " open"}>
+        <summary class="task-stack-header" draggable="true"><strong>${esc(name)}</strong><span class="tag">${tasks.length}</span></summary>
+        ${tasks.map((task) => taskCard(task, true)).join("")}
+      </details>`;
+  }).join("");
+}
+
 function drawBoard() {
+  const query = taskQuery.trim().toLowerCase();
   $("#board").innerHTML = statuses
     .map((s) => {
-      let rows = data.tasks.filter(
+      const rows = data.tasks.filter(
         (t) =>
           t.status === s &&
-          (!taskProject || t.project === taskProject) &&
-          (!taskKind || t.kind === taskKind) &&
-          (!taskColor || (t.color || "none") === taskColor) &&
-          [t.title, t.description, t.module, ...t.branches]
+          (!taskProjects.size || taskProjects.has(t.project)) &&
+          (!taskKinds.size || taskKinds.has(t.kind)) &&
+          (!taskColorFilters.size || taskColorFilters.has(t.color || "none")) &&
+          [t.title, t.description, t.module, t.group, ...t.branches]
             .join(" ")
             .toLowerCase()
-            .includes(taskQuery.toLowerCase()),
+            .includes(query),
       );
 
-      return `<section class="lane" data-status="${s}"><div class="lanehead">${s}<span class="muted">${rows.length}</span></div>${rows.map((t) => `<div class="task" draggable="true" data-task="${esc(t.id)}" data-color="${esc(t.color || "")}"><div>${kindTag(t.kind)}<span class="tag">${esc(project(t.project)?.code)}</span></div><strong>${esc(t.module ? `${t.module} · ${t.title}` : t.title)}</strong><div class="description clamp">${esc(t.description)}</div><div class="muted">${esc(t.datetime.replace("T", " "))}</div><div>${t.branches.map((b) => `<span class="tag mono">${esc(b)}</span>`).join("")}</div><div class="taskfooter"><span class="muted">${esc(projectName(t.project))}</span><div class="task-actions">${taskColorButtons(t.color)}<button class="btn" data-edit="task:${esc(t.id)}">Edit</button></div></div></div>`).join("")}</section>`;
+      return `<section class="lane" data-status="${s}"><div class="lanehead">${s}<span class="muted">${rows.length}</span></div>${taskStacks(rows, s)}</section>`;
     })
     .join("");
-  document
-    .querySelectorAll(".task[draggable]")
-    .forEach(
-      (el) =>
-      (el.ondragstart = (e) =>
-        e.dataTransfer.setData("text/plain", el.dataset.task)),
-    );
+  const stackDragType = "application/x-worklog-task-stack";
+  document.querySelectorAll(".task-stack").forEach((stack) => {
+    const key = stack.dataset.stack;
+    stack.ontoggle = () => {
+      if (stack.open) collapsedTaskStacks.delete(key);
+      else collapsedTaskStacks.add(key);
+    };
+    stack.querySelector(".task-stack-header").ondragstart = (e) => {
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData(stackDragType, key);
+    };
+  });
+  document.querySelectorAll(".task[draggable]").forEach((el) => {
+    el.ondragstart = (e) => e.dataTransfer.setData("text/plain", el.dataset.task);
+  });
   document.querySelectorAll(".lane").forEach((el) => {
     el.ondragover = (e) => e.preventDefault();
     el.ondrop = async (e) => {
       e.preventDefault();
-      const taskId = e.dataTransfer.getData("text/plain");
       const status = el.dataset.status;
+      const stackKey = e.dataTransfer.getData(stackDragType);
+      const taskId = e.dataTransfer.getData("text/plain");
+      const moving = data.tasks.filter((task) =>
+        task.status !== status &&
+        (stackKey
+          ? task.group && JSON.stringify([task.status, task.group.toLowerCase()]) === stackKey
+          : task.id === taskId),
+      );
+      if (!moving.length) return;
       await persistChange(() => {
-        const t = data.tasks.find((x) => x.id === taskId);
-        if (t) t.status = status;
+        for (const task of moving) task.status = status;
       });
     };
   });
@@ -1000,8 +1087,6 @@ function modal(kind, id) {
         projectOptions(),
       ),
       field("Module", "module", "select", obj.module || "", [], false),
-      field("Date & time", "datetime", "datetime-local", obj.datetime || now()),
-      field("Title", "title", "text", obj.title, [], true),
       field(
         "Status",
         "status",
@@ -1009,6 +1094,21 @@ function modal(kind, id) {
         obj.status || "Backlog",
         statuses.map((s) => [s, s]),
       ),
+      field("Title", "title", "text", obj.title),
+      field("Group", "group", "text", obj.group, [], false, 'placeholder="e.g. Nova tela Relatório"'),
+      `<fieldset class="task-dates">
+        <legend>Dates</legend>
+        ${field("Request date", "requestDate", "date", obj.requestDate)}
+        ${field("Requested by", "requestedBy", "select", obj.requestedBy, [
+          ["", "Select a person"],
+          ...data.people.map((person) => [person.id, person.name]),
+          ...(obj.requestedBy && !data.people.some((person) => person.id === obj.requestedBy)
+            ? [[obj.requestedBy, "Unavailable person"]]
+            : []),
+        ])}
+        ${field("Work start", "datetime", "datetime-local", obj.datetime || now(), [], false, "required")}
+        ${field("Work end", "workEnd", "datetime-local", obj.workEnd)}
+      </fieldset>`,
       `<div class="field wide"><span>Branches</span><div id="branchList" class="branch-list"></div><button type="button" class="btn" id="addBranch">+ Add branch</button></div>`,
       field(
         "Description",
@@ -1078,6 +1178,7 @@ function modal(kind, id) {
     ];
   $("#modalTitle").textContent =
     (id ? "Edit " : "New ") + kind[0].toUpperCase() + kind.slice(1);
+  $("#modal").classList.toggle("task-dialog", kind === "task");
   $("#modalFields").classList.toggle("edit-task-fields", kind === "task" && Boolean(id));
   $("#modalFields").innerHTML = f.join("");
   $("#modal").showModal();
@@ -1161,10 +1262,16 @@ function modal(kind, id) {
           .split(/\r?\n|,/)
           .map((x) => x.trim())
           .filter(Boolean);
-      if (kind === "task")
+      if (kind === "task") {
+        if (v.workEnd && v.workEnd < v.datetime) {
+          toast("Work end must be on or after work start.", "error");
+          return;
+        }
+        v.group = v.group.trim();
         v.branches = [...document.querySelectorAll("#branchList input")]
           .map((i) => i.value.trim())
           .filter(Boolean);
+      }
       if (kind === "meeting")
         v.peopleIds = [
           ...document.querySelectorAll("#peopleChecks input:checked"),
@@ -1347,6 +1454,10 @@ $("#nav").onclick = (e) => {
 };
 
 $("#main").onclick = async (e) => {
+  if (!e.target.closest(".task-multiselect")) {
+    document.querySelectorAll(".task-multiselect[open]").forEach((filter) => { filter.open = false; });
+  }
+
   let d = e.target.closest("[data-date]");
 
   if (d) {
