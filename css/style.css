@@ -249,25 +249,57 @@ select:focus-visible {
   background: #eee4f6;
   color: #765298;
 }
-.day-markers {
+.attendance-badges {
   display: flex;
   flex-wrap: wrap;
+  align-items: flex-start;
   gap: 3px;
-  margin: 3px 0 5px;
+  margin-bottom: 3px;
 }
-.day-marker {
+.attendance-badges .chip {
+  margin-bottom: 0;
+  max-width: 100%;
+}
+.attendance-times {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 4.5ch), 1fr));
+  gap: 1px 4px;
+  flex: 1 1 10ch;
+  min-width: 0;
+  padding-inline: 3px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.day-work-bars {
+  display: grid;
+  gap: 4px;
+  margin: 4px 0 6px;
+}
+.day-work-track {
+  position: relative;
+  display: block;
+  height: 7px;
+  border-radius: 4px;
+  background: var(--surface-alt);
+}
+.day-work-bar {
   display: inline-block;
-  width: 15px;
-  height: 15px;
-  border-radius: 3px;
+  height: 7px;
+  border-radius: 4px;
 }
-.day-marker.is-task {
-  background: #4052D6;
+.day-work-track .day-work-bar {
+  position: absolute;
+  left: min(var(--start), calc(100% - 6px));
+  width: max(6px, var(--duration));
 }
-.day-marker.activity {
-  background: #1591EA;
+.day-work-bar.is-task {
+  background: #a5dfac;
 }
-.legend .day-marker {
+.day-work-bar.activity {
+  background: #a9d6f8;
+}
+.legend .day-work-bar {
+  width: 18px;
   margin-right: 5px;
   vertical-align: middle;
 }
@@ -921,33 +953,41 @@ pre {
 }
 
 .attendance-fields {
-  border: 0;
-  padding: 0;
-  margin: 0;
-  min-width: 0;
-}
-.attendance-summary {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(95px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
   gap: 10px;
-  margin: 0;
 }
-.attendance-summary div {
+.attendance-fields .field {
+  gap: 2px;
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 6px;
+  background: var(--surface-alt);
 }
-.attendance-summary dt {
-  color: var(--muted);
-  font-size: 12px;
+.attendance-fields .field:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
 }
-.attendance-summary dd {
-  margin: 2px 0 0;
+.attendance-fields .field input,
+.attendance-fields .field select {
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
   font-weight: 600;
+  outline: 0;
 }
-.attendance-notes {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+#attendanceForm > .field {
+  margin-top: 10px;
+}
+#attendanceForm textarea {
+  min-height: 52px;
+  color: var(--text);
+}
+#attendanceActions:empty {
+  display: none;
 }
 
 .git-planner {

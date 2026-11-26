@@ -158,6 +158,7 @@ function normalize(raw) {
     a.end = a.end || a.start;
     a.description = a.description || "";
     a.taskId = a.taskId || "";
+    a.peopleIds = Array.isArray(a.peopleIds) ? a.peopleIds : [];
   }
 
   for (const m of d.meetings) {
@@ -248,8 +249,6 @@ const project = (id) => data.projects.find((p) => p.id === id),
   projectName = (id) => project(id)?.name || "—",
   clientName = (id) => client(id)?.name || "—",
   taskName = (id) => data.tasks.find((t) => t.id === id)?.title || "—",
-  peopleForProject = (id) =>
-    data.people.filter((p) => p.clientId === project(id)?.clientId),
   attendance = (d) => data.attendance.find((a) => a.date === d),
   attMins = (a) =>
     a?.start && a?.end
@@ -297,110 +296,165 @@ const punchSteps = [
   ["end", "Clock out"],
 ];
 
-let editingAttendance = false;
-let attendancePending = false;
+let attendanceSaving = Promise.resolve();
 
-function attendancePanel() {
-  const record = attendance(selected);
+function attendanceActions(record) {
   const next = record?.end || record?.mode === "Off"
     ? null
     : punchSteps.find(([key]) => !record?.[key]);
-  const edit = editingAttendance;
   const button = (label, action, primary = false) =>
-    `<button type="button" class="btn ${primary ? "primary" : ""}" data-action="${action}" ${attendancePending ? "disabled" : ""}>${label}</button>`;
-  const mode = (value) => field("Work mode", "mode", "select", value,
-    ["Office", "Remote", "Off"].map((name) => [name, name]));
+    `<button type="button" class="btn ${primary ? "primary" : ""}" data-action="${action}">${label}</button>`;
+  return (record ? button("Delete attendance", "deleteAttendance") : "") +
+    (selected === today() && next ? button(next[1], "punchAttendance", true) : "");
+}
 
-  return `<section class="card panel"><h3>${dateName(selected)} · Attendance</h3>${edit
-      ? `<form id="attendanceForm"><fieldset class="attendance-fields formgrid" ${attendancePending ? "disabled" : ""}>
-        ${mode(record?.mode || "Remote")}
+function attendancePanel() {
+  const record = attendance(selected);
+  return `<section class="card panel"><h3>${dateName(selected)} · Attendance</h3>
+    <form id="attendanceForm">
+      <div class="attendance-fields">
+        ${field("Work mode", "mode", "select", record?.mode || "Remote",
+          ["Office", "Remote", "Off"].map((name) => [name, name]))}
+        ${punchSteps.map(([key, label]) => field(label, key, "time", record?.[key])).join("")}
         ${field("Break (minutes)", "breakMin", "number", record?.breakMin ?? 0, [], false, 'min="0" step="1"')}
-        ${field("Clock in", "start", "time", record?.start)}
-        ${field("Clock out", "end", "time", record?.end)}
-        ${field("Notes", "notes", "textarea", record?.notes, [], true)}
-        <div class="formfoot wide">${button("Cancel", "cancelAttendance")}<button class="btn primary">Save attendance</button></div>
-      </fieldset></form>`
-      : `${record ? `<dl class="attendance-summary">
-          <div><dt>Work mode</dt><dd>${esc(record.mode)}</dd></div>
-          ${punchSteps.map(([key, label]) => `<div><dt>${label}</dt><dd>${esc(record[key] || "—")}</dd></div>`).join("")}
-          <div><dt>Break</dt><dd>${Number(record.breakMin || 0)} min</dd></div>
-        </dl>${record.notes ? `<p class="attendance-notes">${esc(record.notes)}</p>` : ""}`
-        : '<p class="muted">No attendance recorded.</p>'}
-        ${selected === today() && next && !record ? mode("Remote") : ""}
-        <div class="formfoot">
-          ${button(record ? "Edit attendance" : "Add attendance", "editAttendance")}
-          ${record ? button("Delete attendance", "deleteAttendance") : ""}
-          ${selected === today() && next ? button(next[1], "punchAttendance", true) : ""}
-        </div>`
-    }</section>`;
+      </div>
+      ${field("Notes", "notes", "textarea", record?.notes)}
+    </form><div id="attendanceActions" class="formfoot">${attendanceActions(record)}</div></section>`;
 }
 
-async function updateAttendance(change, message) {
-  if (attendancePending) return;
-  attendancePending = true;
-  render();
-  try {
-    return await persistChange(change, message);
-  } finally {
-    attendancePending = false;
-    render();
+function queueAttendance(change) {
+  const operation = attendanceSaving.then(change);
+  attendanceSaving = operation.catch(console.error);
+  return operation;
+}
+
+function saveAttendance(form, date, changedField) {
+  if (!form.reportValidity()) return;
+  const values = Object.fromEntries(new FormData(form));
+  const { start, breakStart, breakEnd, end } = values;
+  const punches = [start, breakStart, breakEnd, end].filter(Boolean);
+  if ((!start && (breakStart || breakEnd || end)) || (breakEnd && !breakStart) ||
+      punches.some((time, index) => index > 0 && time < punches[index - 1])) {
+    toast("Enter clock-in first and keep punch times in order.", "error");
+    return;
   }
+
+  values.breakMin = Number(values.breakMin);
+  if ((changedField === "breakStart" || changedField === "breakEnd") && breakStart && breakEnd) {
+    values.breakMin = minutes(date + "T" + breakStart, date + "T" + breakEnd);
+    form.elements.breakMin.value = values.breakMin;
+  }
+  if (end && values.breakMin > minutes(date + "T" + start, date + "T" + end)) {
+    toast("Break cannot exceed the time between clock in and clock out.", "error");
+    return;
+  }
+
+  return queueAttendance(async () => {
+    if (!ready) return;
+    const record = attendance(date);
+    const previousValues = { mode: "Remote", ...record, breakMin: Number(record?.breakMin || 0) };
+    if (Object.entries(values).every(([key, value]) => value === (previousValues[key] ?? ""))) return;
+    const updated = { ...record, date, ...values };
+    if (record) data.attendance[data.attendance.indexOf(record)] = updated;
+    else data.attendance.push(updated);
+
+    if (!(await save())) {
+      const index = data.attendance.indexOf(updated);
+      if (index !== -1) {
+        if (record) data.attendance[index] = record;
+        else data.attendance.splice(index, 1);
+      }
+      return;
+    }
+
+    if (tab === "overview") {
+      $(".metrics").outerHTML = overviewMetrics();
+      if (updated.mode !== record?.mode || punchSteps.some(([key]) => updated[key] !== record?.[key])) {
+        const day = $(`[data-date="${date}"]`);
+        if (day) {
+          const badges = day.querySelector(".attendance-badges");
+          if (badges) badges.outerHTML = attendanceBadges(updated);
+          else day.querySelector(".daynum").insertAdjacentHTML("afterend", attendanceBadges(updated));
+          day.setAttribute("aria-describedby", `attendance-times-${date}`);
+          day.classList.toggle("day-off", updated.mode === "Off");
+          const label = day.getAttribute("aria-label");
+          const suffix = label.slice(dateName(date).length).replace(/^, Holiday/, "");
+          day.setAttribute("aria-label", dateName(date) + (updated.mode === "Off" ? ", Holiday" : "") + suffix);
+        }
+      }
+      if (selected === date) {
+        const actions = attendanceActions(updated);
+        if ($("#attendanceActions").innerHTML !== actions) $("#attendanceActions").innerHTML = actions;
+      }
+    }
+  });
 }
 
-function overview() {
+function overviewMetrics() {
   let rows = data.attendance.filter((a) =>
     a.date.startsWith(iso(month).slice(0, 7)),
   ),
     sum = (arr) => arr.reduce((n, a) => n + attMins(a), 0),
     office = rows.filter((a) => a.mode === "Office"),
     remote = rows.filter((a) => a.mode === "Remote");
+  return `<div class="metrics"><div class="card metric"><label>Logged hours</label><strong>${fmt(sum(rows))}</strong><span>This month</span></div><div class="card metric"><label>Office days</label><strong>${office.length} <small>(${fmt(sum(office))})</small></strong><span>This month</span></div><div class="card metric"><label>Remote days</label><strong>${remote.length} <small>(${fmt(sum(remote))})</small></strong><span>This month</span></div><div class="card metric"><label>Active tasks</label><strong>${data.tasks.filter((t) => t.status !== "Production").length}</strong><span>All projects</span></div></div>`;
+}
+
+function overview() {
+  const date = selected;
   $("#main").innerHTML =
     heading(
       "Overview",
       `${btn("‹", "prevMonth")}${btn("Today", "today")}${btn("›", "nextMonth")}<strong>${month.toLocaleDateString("en-US", { month: "long", year: "numeric" })}</strong>`,
     ) +
-    `<div class="metrics"><div class="card metric"><label>Logged hours</label><strong>${fmt(sum(rows))}</strong><span>This month</span></div><div class="card metric"><label>Office days</label><strong>${office.length} <small>(${fmt(sum(office))})</small></strong><span>This month</span></div><div class="card metric"><label>Remote days</label><strong>${remote.length} <small>(${fmt(sum(remote))})</small></strong><span>This month</span></div><div class="card metric"><label>Active tasks</label><strong>${data.tasks.filter((t) => t.status !== "Production").length}</strong><span>All projects</span></div></div>${calendar()}<div class="below">${attendancePanel()}<section class="card panel"><h3>Daily timeline</h3>${timeline()}</section></div>`;
+    `${overviewMetrics()}${calendar()}<div class="below">${attendancePanel()}<section class="card panel"><h3>Daily timeline</h3>${timeline()}</section></div>`;
 
   const form = $("#attendanceForm");
-  if (!form) return;
-  form.onsubmit = async (e) => {
-    e.preventDefault();
-    const date = selected;
-    const record = attendance(date);
-    const values = Object.fromEntries(new FormData(form));
-    values.breakMin = Number(values.breakMin);
-    if (values.end && (!values.start || values.end < values.start)) {
-      toast("Clock out must be at or after clock in.", "error");
-      return;
-    }
-    if (values.end && values.breakMin > minutes(date + "T" + values.start, date + "T" + values.end)) {
-      toast("Break cannot exceed the time between clock in and clock out.", "error");
-      return;
-    }
-    if (record?.breakStart && (!values.start || values.start > record.breakStart ||
-      (values.end && values.end < (record.breakEnd || record.breakStart)) ||
-      values.breakMin !== Number(record.breakMin || 0))) {
-      values.breakStart = "";
-      values.breakEnd = "";
-    }
-    editingAttendance = false;
-    const success = await updateAttendance(() => {
-      if (record) Object.assign(record, values);
-      else data.attendance.push({ date, ...values });
-    }, "Attendance saved.");
-    if (!success && selected === date && tab === "overview") {
-      editingAttendance = true;
-      render();
-    }
+  form.onchange = (event) => saveAttendance(form, date, event.target.name);
+  form.onsubmit = (event) => {
+    event.preventDefault();
+    saveAttendance(form, date);
   };
 }
 
+function workOnDate(date, start, end) {
+  const midnight = date + "T00:00";
+  return start.startsWith(date) || (start < midnight && end > midnight);
+}
+
 function tasksOnDate(date) {
-  return data.tasks.filter((task) => {
-    const start = task.datetime.slice(0, 10);
-    const end = task.workEnd?.slice(0, 10) || start;
-    return start <= date && date <= end;
-  });
+  return data.tasks.filter((task) => workOnDate(date, task.datetime, task.workEnd));
+}
+
+function activitiesOnDate(date) {
+  return data.activity.filter((entry) => workOnDate(date, entry.start, entry.end));
+}
+
+function calendarWorkBar(date, kind, title, start, end) {
+  const dayMinutes = 24 * 60;
+  const minuteOfDay = (time) => Number(time.slice(11, 13)) * 60 + Number(time.slice(14, 16));
+  const from = start.startsWith(date) ? minuteOfDay(start) : 0;
+  const to = !end || end <= start ? from
+    : end.startsWith(date) ? minuteOfDay(end)
+    : dayMinutes;
+  const range = to > from
+    ? `${from === 0 ? "00:00" : start.slice(11, 16)}–${to === dayMinutes ? "24:00" : end.slice(11, 16)}`
+    : start.slice(11, 16);
+  return `<span class="day-work-track"><span class="day-work-bar ${kind}"
+    style="--start:${from / dayMinutes * 100}%;--duration:${(to - from) / dayMinutes * 100}%"
+    title="${esc(title + " · " + range)}"></span></span>`;
+}
+
+function attendanceBadges(record) {
+  if (!record) return "";
+  const times = punchSteps.map(([key, label]) => [record[key] || "—", label]);
+  const description = times.map(([time, label]) => `${label}: ${time}`).join(", ");
+  return `<span class="attendance-badges">
+    <span class="chip ${esc(record.mode.toLowerCase())}">${esc(record.mode)}</span>
+    <span class="chip attendance-times" role="img" id="attendance-times-${esc(record.date)}" title="${esc(description)}" aria-label="${esc(description)}">
+      ${times.map(([time]) => `<span>${esc(time)}</span>`).join("")}
+    </span>
+  </span>`;
 }
 
 function calendar() {
@@ -427,16 +481,15 @@ function calendar() {
       a = attendance(key);
 
     const tasks = tasksOnDate(key);
-    const activities = data.activity.filter((entry) => entry.start.startsWith(key));
-    const markers = [
-      ...tasks.map((task) => ["is-task", `Task: ${task.title}`]),
-      ...activities.map((entry) => ["activity", `Activity: ${entry.title}`]),
+    const activities = activitiesOnDate(key);
+    const bars = [
+      ...tasks.map((task) => calendarWorkBar(key, "is-task", task.title, task.datetime, task.workEnd)),
+      ...activities.map((entry) => calendarWorkBar(key, "activity", entry.title, entry.start, entry.end)),
     ];
-    html += `<button type="button" class="day ${a?.mode === "Off" ? "day-off" : ""} ${d.getMonth() !== month.getMonth() ? "outside" : ""} ${key === selected ? "selected" : ""} ${key === today() ? "today" : ""}" data-date="${key}" aria-pressed="${key === selected}" aria-label="${dateName(key)}${a?.mode === "Off" ? ", Holiday" : ""}, ${tasks.length} tasks, ${activities.length} activities">
+    html += `<button type="button" class="day ${a?.mode === "Off" ? "day-off" : ""} ${d.getMonth() !== month.getMonth() ? "outside" : ""} ${key === selected ? "selected" : ""} ${key === today() ? "today" : ""}" data-date="${key}" aria-pressed="${key === selected}" aria-label="${dateName(key)}${a?.mode === "Off" ? ", Holiday" : ""}, ${tasks.length} tasks, ${activities.length} activities"${a ? ` aria-describedby="attendance-times-${key}"` : ""}>
       <span class="daynum">${d.getDate()}</span>
-      ${a ? `<span class="chip ${esc(a.mode.toLowerCase())}">${esc(a.mode)}</span>` : ""}
-      ${markers.length ? `<span class="day-markers" aria-hidden="true">${markers.map(([kind, title]) =>
-      `<span class="day-marker ${kind}" title="${esc(title)}"></span>`).join("")}</span>` : ""}
+      ${attendanceBadges(a)}
+      ${bars.length ? `<span class="day-work-bars" aria-hidden="true">${bars.join("")}</span>` : ""}
       ${data.meetings.filter((meeting) => meeting.start.startsWith(key)).slice(0, 1).map(
         (meeting) => `<span class="chip">${esc(meeting.start.slice(11))} ${esc(meeting.title)}</span>`,
       ).join("")}
@@ -445,7 +498,7 @@ function calendar() {
 
   return (
     html +
-    '</div><div class="legend"><span><i class="dot" style="background:#7697d2"></i>Office</span><span><i class="dot" style="background:#62b78c"></i>Remote</span><span><i class="dot" style="background:#aa8dc9"></i>Off</span><span><i class="day-marker is-task"></i>Tasks</span><span><i class="day-marker activity"></i>Activities</span></div></div>'
+    '</div><div class="legend"><span><i class="dot" style="background:#7697d2"></i>Office</span><span><i class="dot" style="background:#62b78c"></i>Remote</span><span><i class="dot" style="background:#aa8dc9"></i>Off</span><span><i class="day-work-bar is-task"></i>Tasks</span><span><i class="day-work-bar activity"></i>Activities</span></div></div>'
   );
 }
 
@@ -456,9 +509,11 @@ function timeline() {
       start: task.datetime.startsWith(selected) ? task.datetime : selected,
       type: "Task",
     })),
-    ...data.activity
-      .filter((a) => a.start.startsWith(selected))
-      .map((a) => ({ ...a, type: "Activity" })),
+    ...activitiesOnDate(selected).map((entry) => ({
+      ...entry,
+      start: entry.start.startsWith(selected) ? entry.start : selected,
+      type: "Activity",
+    })),
     ...data.meetings
       .filter((m) => m.start.startsWith(selected))
       .map((m) => ({ ...m, type: "Meeting" })),
@@ -646,7 +701,20 @@ function activity() {
   let items = [...data.activity].sort((a, b) => b.start.localeCompare(a.start));
   $("#main").innerHTML =
     heading("Activity Log", btn("+ Activity", "newActivity", true)) +
-    `<div class="list">${items.map((a) => `<article class="card item"><div class="itemtop"><div><strong>${esc(a.title)}</strong><div class="muted">${esc(a.start.replace("T", " "))} – ${esc(a.end.replace("T", " "))} · ${fmt(minutes(a.start, a.end))} · ${esc(projectName(a.project))}</div></div><button class="btn" data-edit="activity:${a.id}">Edit</button></div><div class="description clamp">${esc(a.description)}</div>${a.taskId ? `<span class="tag">Task: ${esc(taskName(a.taskId))}</span>` : ""}</article>`).join("")}</div>`;
+    `<div class="list">${items.map((a) => `<article class="card item"><div class="itemtop"><div><strong>${esc(a.title)}</strong><div class="muted">${esc(a.start.replace("T", " "))} – ${esc(a.end.replace("T", " "))} · ${fmt(minutes(a.start, a.end))} · ${esc(projectName(a.project))}</div></div><button class="btn" data-edit="activity:${a.id}">Edit</button></div><div class="description clamp">${esc(a.description)}</div>${a.taskId ? `<span class="tag">Task: ${esc(taskName(a.taskId))}</span>` : ""}${a.peopleIds.length ? `<div>${peopleTags(a.peopleIds)}</div>` : ""}</article>`).join("")}</div>`;
+}
+
+function peopleSelect(selectedIds = []) {
+  const options = data.people.map((person) =>
+    `<option value="${esc(person.id)}"${selectedIds.includes(person.id) ? " selected" : ""}>${esc(person.name)}</option>`,
+  ).join("") || '<option disabled>No people registered</option>';
+  return `<label class="field wide">People (optional)
+    <select name="peopleIds" multiple size="4">${options}</select>
+  </label>`;
+}
+
+function peopleTags(ids) {
+  return ids.map((id) => `<span class="tag">${esc(data.people.find((person) => person.id === id)?.name || "Unknown")}</span>`).join("");
 }
 
 function meetings() {
@@ -667,7 +735,7 @@ function meetings() {
         .sort((a, b) => b.start.localeCompare(a.start))
         .map(
           (m) =>
-            `<article class="card item"><div class="itemtop"><div><strong>${esc(m.title)}</strong><div class="muted">${esc(m.start.replace("T", " "))} – ${esc(m.end.replace("T", " "))} · ${esc(projectName(m.project))}</div></div><button class="btn" data-edit="meeting:${m.id}">Edit</button></div><div class="description clamp">${esc(m.description)}</div><div>${m.peopleIds.map((id) => `<span class="tag">${esc(data.people.find((p) => p.id === id)?.name || "Unknown")}</span>`).join("")}</div>${m.decisions ? `<div class="muted">Decisions: ${esc(m.decisions)}</div>` : ""}</article>`,
+            `<article class="card item"><div class="itemtop"><div><strong>${esc(m.title)}</strong><div class="muted">${esc(m.start.replace("T", " "))} – ${esc(m.end.replace("T", " "))} · ${esc(projectName(m.project))}</div></div><button class="btn" data-edit="meeting:${m.id}">Edit</button></div><div class="description clamp">${esc(m.description)}</div><div>${peopleTags(m.peopleIds)}</div>${m.decisions ? `<div class="muted">Decisions: ${esc(m.decisions)}</div>` : ""}</article>`,
         )
         .join("")}</div>`);
 }
@@ -1140,6 +1208,7 @@ function modal(kind, id) {
       ),
       field("Start", "start", "datetime-local", obj.start || now()),
       field("End", "end", "datetime-local", obj.end || now()),
+      peopleSelect(obj.peopleIds),
       field("Title", "title", "text", obj.title, [], true),
       field(
         "Description",
@@ -1164,7 +1233,7 @@ function modal(kind, id) {
       field("Start", "start", "datetime-local", obj.start || now()),
       field("End", "end", "datetime-local", obj.end || now()),
       field("Title", "title", "text", obj.title, [], true),
-      `<div class="field wide"><span>Attendees (from project client)</span><div id="peopleChecks"></div></div>`,
+      peopleSelect(obj.peopleIds),
       field(
         "Description / Minutes",
         "description",
@@ -1238,25 +1307,13 @@ function modal(kind, id) {
     update();
   }
 
-  if (kind === "meeting") {
-    let update = () => {
-      let ppl = peopleForProject($("#modalFields [name=project]").value);
-      $("#peopleChecks").innerHTML =
-        ppl
-          .map(
-            (p) =>
-              `<label style="display:inline-flex;align-items:center;gap:6px;margin:5px 15px 5px 0"><input type="checkbox" name="attendee" value="${esc(p.id)}" ${(obj.peopleIds || []).includes(p.id) ? "checked" : ""}>${esc(p.name)}</label>`,
-          )
-          .join("") ||
-        '<span class="muted">No people registered for this client</span>';
-    };
-    $("#modalFields [name=project]").onchange = update;
-    update();
-  }
   $("#modalForm").onsubmit = async (e) => {
     e.preventDefault();
     try {
-      const v = Object.fromEntries(new FormData(e.target));
+      const formData = new FormData(e.target);
+      const v = Object.fromEntries(formData);
+      if (kind === "activity" || kind === "meeting")
+        v.peopleIds = formData.getAll("peopleIds");
       if (kind === "project")
         v.modules = String(v.modules || "")
           .split(/\r?\n|,/)
@@ -1272,10 +1329,6 @@ function modal(kind, id) {
           .map((i) => i.value.trim())
           .filter(Boolean);
       }
-      if (kind === "meeting")
-        v.peopleIds = [
-          ...document.querySelectorAll("#peopleChecks input:checked"),
-        ].map((i) => i.value);
       if ((kind === "activity" || kind === "meeting") && v.end < v.start) {
         toast("End must be after start.", "error");
         return;
@@ -1461,7 +1514,6 @@ $("#main").onclick = async (e) => {
   let d = e.target.closest("[data-date]");
 
   if (d) {
-    editingAttendance = false;
     selected = d.dataset.date;
     month = new Date(selected + "T12:00");
     month.setDate(1);
@@ -1514,36 +1566,29 @@ $("#main").onclick = async (e) => {
       render();
       break;
     case "today":
-      editingAttendance = false;
       selected = today();
       month = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
       render();
       break;
-    case "editAttendance":
-      editingAttendance = true;
-      render();
-      $("#attendanceForm [name=mode]").focus();
-      break;
-    case "cancelAttendance":
-      editingAttendance = false;
-      render();
-      $("#main [data-action=editAttendance]").focus();
-      break;
     case "deleteAttendance": {
       const date = selected;
       if (!confirm(`Delete attendance for ${dateName(date)}?`)) break;
-      await updateAttendance(() => {
+      await queueAttendance(() => persistChange(() => {
         data.attendance = data.attendance.filter((record) => record.date !== date);
-      }, "Attendance deleted.");
+      }, "Attendance deleted."));
       break;
     }
     case "punchAttendance": {
       const date = selected;
+      const button = e.target.closest("button");
+      const expectedLabel = button.textContent;
+      await attendanceSaving;
       const record = attendance(date);
-      if (date !== today() || record?.end || record?.mode === "Off") break;
+      if (date !== selected || date !== today() || record?.end || record?.mode === "Off") break;
       const nextIndex = punchSteps.findIndex(([key]) => !record?.[key]);
       if (nextIndex === -1) break;
       const [key, label] = punchSteps[nextIndex];
+      if (label !== expectedLabel || button.disabled) break;
       const time = now().slice(11);
       const previous = record?.[punchSteps[nextIndex - 1]?.[0]];
       if (previous && time < previous) {
@@ -1552,10 +1597,11 @@ $("#main").onclick = async (e) => {
       }
       const mode = $("#main [name=mode]")?.value || "Remote";
       if (mode === "Off") {
-        toast("Use Add attendance to record a day off.", "error");
+        toast("Select Office or Remote to clock in.", "error");
         break;
       }
-      await updateAttendance(() => {
+      button.disabled = true;
+      await queueAttendance(() => persistChange(() => {
         if (!record) {
           data.attendance.push({ date, mode, start: time, breakMin: 0, notes: "" });
           return;
@@ -1564,7 +1610,8 @@ $("#main").onclick = async (e) => {
         if (key === "breakEnd") {
           record.breakMin = minutes(date + "T" + record.breakStart, date + "T" + time);
         }
-      }, `${label} recorded.`);
+      }, `${label} recorded.`));
+      button.disabled = false;
       break;
     }
     case "newClient":
